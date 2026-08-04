@@ -1,23 +1,84 @@
-use std::net::Ipv4Addr;
-//absl // or tokio main setup
+// SPDX-License-Identifier: MIT
+
+use std::{env, net::Ipv4Addr};
+use hickory_resolver::Resolver;
+
+use futures_util::TryStreamExt;
+use ipnetwork::Ipv4Network;
+use rtnetlink::{new_connection, Error, Handle, RouteMessageBuilder};
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (connection, handle, _) = rtnetlink::new_connection()?;
+async fn main() -> Result<(), ()> {
+    let resolver = Resolver::builder_tokio().unwrap().build().unwrap();
+    let response = resolver.lookup_ip("www.example.com.").await.unwrap();
+    println!("{:#?}", response.as_lookup());
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 4 {
+        usage();
+        return Ok(());
+    }
+
+    let dest: Ipv4Network = args[1].parse().unwrap_or_else(|_| {
+        eprintln!("invalid destination");
+        std::process::exit(1);
+    });
+    let iface: String = args[2].parse().unwrap_or_else(|_| {
+        eprintln!("invalid interface");
+        std::process::exit(1);
+    });
+    let source: Ipv4Addr = args[3].parse().unwrap_or_else(|_| {
+        eprintln!("invalid source");
+        std::process::exit(1);
+    });
+
+    let (connection, handle, _) = new_connection().unwrap();
     tokio::spawn(connection);
-    let dest_ip: Ipv4Addr = "192.168.10.0".parse()?;
-    let gateway_ip: Ipv4Addr = "192.168.1.1".parse()?;
-    let ifindex: u32 = 2; // Target interface index (e.g., eth0)
 
-    handle
-        .route()
-        .add()
-        .v4()
-        .destination_prefix(dest_ip, 24)
-        .gateway(gateway_ip)
-        .output_interface(ifindex)
-        .execute()
-        .await?;
-
-    println!("Route added successfully!");
+    if let Err(e) = add_route(&dest, iface, source, handle.clone()).await {
+        eprintln!("{e}");
+    }
     Ok(())
+}
+
+async fn add_route(
+    dest: &Ipv4Network,
+    iface: impl Into<String>,
+    source: Ipv4Addr,
+    handle: Handle,
+) -> Result<(), Error> {
+    let iface = iface.into();
+    let iface_idx = handle
+        .link()
+        .get()
+        .match_name(iface)
+        .execute()
+        .try_next()
+        .await?
+        .unwrap()
+        .header
+        .index;
+
+    let route = RouteMessageBuilder::<Ipv4Addr>::new()
+        .destination_prefix(dest.ip(), dest.prefix())
+        .output_interface(iface_idx)
+        .pref_source(source)
+        .build();
+    handle.route().add(route).execute().await?;
+    Ok(())
+}
+
+fn usage() {
+    eprintln!(
+        "usage:
+    cargo run --example add_route_pref_src -- <destination>/<prefix_length> <interface> <source>
+
+Note that you need to run this program as root. Instead of running cargo as root,
+build the example normally:
+
+    cd rtnetlink ; cargo build --example add_route_pref_src
+
+Then find the binary in the target directory:
+
+    cd ../target/debug/example ; sudo ./add_route_pref_src <destination>/<prefix_length> <interface> <source>"
+    );
 }
