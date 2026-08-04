@@ -9,43 +9,39 @@ use rtnetlink::{new_connection, Error, Handle, RouteMessageBuilder};
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {
-    let resolver = Resolver::builder_tokio().unwrap().build().unwrap();
-    let response = resolver.lookup_ip("www.example.com.").await.unwrap();
-    let mut args: Vec<String> = vec![];
-    for a in response.iter() {
-        if a.is_ipv4() {
-            println!("{}", a);
-            args.push(format!("{}/32", a.to_string()));
-            args.push("enp7s0".to_string());
-            args.push("192.168.0.219".to_string());
-        }
-    }
-    /*
+    let (connection, handle, _) = new_connection().unwrap();
+    tokio::spawn(connection);
     let args: Vec<String> = env::args().collect();
     if args.len() != 4 {
+        println!("Argument count: {}", args.len());
         usage();
         return Ok(());
     }
-    */
-
-    let dest: Ipv4Network = args[0].parse().unwrap_or_else(|_| {
-        eprintln!("invalid destination");
+    let dnsname: String = args[1].parse().unwrap_or_else(|_| {
+        eprintln!("invalid DNS name");
         std::process::exit(1);
     });
-    let iface: String = args[1].parse().unwrap_or_else(|_| {
+    let iface: String = args[2].parse().unwrap_or_else(|_| {
         eprintln!("invalid interface");
         std::process::exit(1);
     });
-    let source: Ipv4Addr = args[2].parse().unwrap_or_else(|_| {
+    let source: Ipv4Addr = args[3].parse().unwrap_or_else(|_| {
         eprintln!("invalid source");
         std::process::exit(1);
     });
-
-    let (connection, handle, _) = new_connection().unwrap();
-    tokio::spawn(connection);
-
-    if let Err(e) = add_route(&dest, iface, source, handle.clone()).await {
-        eprintln!("{e}");
+    let resolver = Resolver::builder_tokio().unwrap().build().unwrap();
+    let response = resolver.lookup_ip(dnsname).await.unwrap();
+    for a in response.iter() {
+        if a.is_ipv4() {
+            let dest: Ipv4Network = format!("{}/32", a).parse().unwrap_or_else(|_| {
+                eprintln!("invalid destination");
+                std::process::exit(1);
+            });
+            println!("{}", a);
+            if let Err(e) = add_route(&dest, &iface, source, handle.clone()).await {
+                eprintln!("{e}");
+            };
+        }
     }
     Ok(())
 }
@@ -68,6 +64,7 @@ async fn add_route(
         .header
         .index;
 
+    println!("{}", "Adding route!");
     let route = RouteMessageBuilder::<Ipv4Addr>::new()
         .destination_prefix(dest.ip(), dest.prefix())
         .output_interface(iface_idx)
@@ -80,15 +77,6 @@ async fn add_route(
 fn usage() {
     eprintln!(
         "usage:
-    cargo run --example add_route_pref_src -- <destination>/<prefix_length> <interface> <source>
-
-Note that you need to run this program as root. Instead of running cargo as root,
-build the example normally:
-
-    cd rtnetlink ; cargo build --example add_route_pref_src
-
-Then find the binary in the target directory:
-
-    cd ../target/debug/example ; sudo ./add_route_pref_src <destination>/<prefix_length> <interface> <source>"
+        dns-to-route <DNS record to resolve> <interface> <source>"
     );
 }
