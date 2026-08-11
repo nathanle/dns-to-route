@@ -5,12 +5,25 @@ use hickory_resolver::Resolver;
 
 use futures_util::TryStreamExt;
 use ipnetwork::Ipv4Network;
-use rtnetlink::{new_connection, Error, Handle, RouteMessageBuilder};
+use rtnetlink::{new_connection, Error, Handle, RouteMessageBuilder, IpVersion};
+use netlink_packet_route::route::{RouteMessage, RouteProtocol};
+
+
+const DNS_ROUTE: RouteProtocol = RouteProtocol::Other(42); 
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {
     let (connection, handle, _) = new_connection().unwrap();
     tokio::spawn(connection);
+    let current_routes = RouteMessageBuilder::<Ipv4Addr>::new()
+        .build();
+    let mut routes = handle.route().get(current_routes).execute();
+
+    while let Ok(Some(route)) = routes.try_next().await {
+        if matches_protocol(&route, RouteProtocol::Babel) {
+            process_route(route);
+        }
+    }
     let args: Vec<String> = env::args().collect();
     if args.len() != 4 {
         println!("Argument count: {}", args.len());
@@ -68,11 +81,24 @@ async fn add_route(
     let route = RouteMessageBuilder::<Ipv4Addr>::new()
         .destination_prefix(dest.ip(), dest.prefix())
         .output_interface(iface_idx)
+        .protocol(DNS_ROUTE)
         .pref_source(source)
         .build();
     handle.route().add(route).execute().await?;
     Ok(())
 }
+
+fn matches_protocol(route: &RouteMessage, target: RouteProtocol) -> bool {
+    if route.header.protocol == target {
+        return true;
+    }
+    false
+}
+
+fn process_route(route: RouteMessage) {
+    println!("Found route: {:#?}", route);
+}
+
 
 fn usage() {
     eprintln!(
