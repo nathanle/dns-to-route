@@ -41,7 +41,7 @@ Checking status of address: 172.66.147.243
 Route exists for 172.66.147.243
 ```
 
-Clone repo, cd into dns-to-route run:
+Clone repo, cd into dns-to-route, then run:
 ```
 cargo build --release
 ```
