@@ -15,6 +15,7 @@ Route for 104.20.23.154 added.
 Checking status of address: 172.66.147.243
 No matching result exists. Adding DNS result 172.66.147.243 to the table.
 Route for 172.66.147.243 added.```
+```
 
 We did a DNS request on www.example.com and we recieved two IPv4 addresses back. We are going to add a route for each IP to use the eth0 interface and source from 172.236.110.200
 
