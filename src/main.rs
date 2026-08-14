@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: MIT
 
 use std::{env, net::Ipv4Addr, net::IpAddr};
-use hickory_resolver::{Resolver, lookup_ip::LookupIp};
+use hickory_resolver::{Resolver};
 
 use futures_util::TryStreamExt;
 use ipnetwork::Ipv4Network;
 use rtnetlink::{new_connection, Error, Handle, RouteMessageBuilder};
-use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteMessage, RouteProtocol};
-
+use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteProtocol};
 
 const DNS_ROUTE: RouteProtocol = RouteProtocol::Other(42); 
 
@@ -49,33 +48,55 @@ async fn main() -> Result<(), ()> {
     let response = resolver.lookup_ip(dnsname).await.unwrap();
     let current_routes = RouteMessageBuilder::<Ipv4Addr>::new()
         .build();
-    let routes_stream = handle.route().get(current_routes).execute();
-    let routes = routes_stream.try_collect::<Vec<_>>().await.unwrap();
-    //while let Ok(Some(route)) = routes_stream.try_next().await {
-        //let test = route.attributes
-        //    .iter()
-        //    .find(|item| {
-        //        matches!(item, RouteAttribute::Destination(RouteAddress::Inet(_)))
-        //    });
-        //println!("{:?}", test);
-
-    for x in &routes {
-        if matches_protocol(&x, RouteProtocol::Babel) {
-            if process_route(handle.clone(), x.clone(), response.clone()).await {
-
+    let mut run_once = true;
+    let mut dns_proto_exists = false;
+    for address in response.iter() {
+        if address.is_ipv4() {
+            let mut ipv4address: Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
+            let mut routes = handle.route().get(current_routes.clone()).execute();
+            if let IpAddr::V4(v4_addr) = address {
+                ipv4address = v4_addr;
             }
-        }
-    }
-    for a in response.iter() {
-        if a.is_ipv4() {
-            let dest: Ipv4Network = format!("{}/32", a).parse().unwrap_or_else(|_| {
-                eprintln!("invalid destination");
-                std::process::exit(1);
-            });
-            println!("{}", a);
-            if let Err(e) = add_route(&dest, iface_idx, source, handle.clone(), a).await {
-                eprintln!("{e}");
-            };
+            println!("Checking status of address: {:?}", address.clone());
+            let ip = RouteAttribute::Destination(RouteAddress::Inet(ipv4address));
+            let mut route_found: bool = false;
+            while let Ok(Some(route)) = routes.try_next().await {
+                dns_proto_exists = false;
+                let protocol = route.header.protocol; 
+                if protocol == RouteProtocol::Babel {
+                    dns_proto_exists = true;
+                }
+                for r in &route.attributes {
+                    let mut raddress: Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
+                    if let RouteAttribute::Destination(RouteAddress::Inet(x)) = r {
+                        raddress = *x;
+                    }
+                    let in_dns_results = response.iter().any(|item| match item {
+                        IpAddr::V6(_) => false,
+                        IpAddr::V4(item) => item == raddress,
+                    });
+                    if let RouteAttribute::Destination(RouteAddress::Inet(_)) = r && *r == ip && dns_proto_exists {
+                        println!("Route exists for {:#?}", ipv4address);
+                        route_found = true;
+                    }
+                    if let RouteAttribute::Destination(RouteAddress::Inet(_)) = r && *r != ip && dns_proto_exists && run_once && !in_dns_results {
+                        println!("Route exists for {:#?}, but no longer in DNS", raddress);
+                        let _ = handle.route().del(route.clone()).execute().await;
+                        route_found = true;
+                        run_once = false;
+                    }
+                }
+            }
+            if !route_found {
+                println!("No matching result exists. Adding DNS result {} to the table.", ipv4address);
+                let dest: Ipv4Network = format!("{}/32", address).parse().unwrap_or_else(|_| {
+                    eprintln!("invalid destination");
+                    std::process::exit(1);
+                });
+                if let Err(e) = add_route(&dest, iface_idx, source, handle.clone(), address).await {
+                    eprintln!("{e}");
+                };
+            }
         }
     }
     Ok(())
@@ -99,44 +120,6 @@ async fn add_route(
     handle.route().add(route).execute().await?;
     Ok(())
 }
-
-fn matches_protocol(route: &RouteMessage, target: RouteProtocol) -> bool {
-    if route.header.protocol == target {
-        return true;
-    }
-    false
-}
-
-async fn process_route(
-    handle: Handle,
-    route: RouteMessage,
-    response: LookupIp
-) -> bool {
-    for attribute in route.attributes.iter() {
-        if let RouteAttribute::Destination(route_addr) = attribute {
-            let dest_ip: IpAddr = match route_addr {
-                RouteAddress::Inet(ipv4) => IpAddr::V4(*ipv4),
-                _ => continue,
-            };
-            if response.iter().any(|x| x == dest_ip) {
-                println!("Route for {} exists. No modifications needed.", dest_ip);
-                return false 
-            } else {
-                println!("I am deleting the route for {:?} as it is not in DNS results", dest_ip);
-                let _ = handle
-                    .route()
-                    .del(route)
-                    .execute()
-                    .await
-                    .map_err(|e| format!("Failed to delete route: {}", e));
-                return false
-            }
-            
-        }
-    }
-    return true 
-}
-
 
 fn usage() {
     eprintln!(
