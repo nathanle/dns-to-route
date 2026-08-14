@@ -80,8 +80,9 @@ async fn main() -> Result<(), ()> {
                         route_found = true;
                     }
                     if let RouteAttribute::Destination(RouteAddress::Inet(_)) = r && *r != ip && dns_proto_exists && run_once && !in_dns_results {
-                        println!("Route exists for {:#?}, but no longer in DNS", raddress);
+                        println!("Route exists for {:#?}, but no longer in DNS.", raddress);
                         let _ = handle.route().del(route.clone()).execute().await;
+                        println!("Route for {:#?} deleted.", raddress);
                         route_found = true;
                         run_once = false;
                     }
@@ -110,7 +111,6 @@ async fn add_route(
     address: IpAddr,
 ) -> Result<(), Error> {
 
-    println!("Adding route: {}", address);
     let route = RouteMessageBuilder::<Ipv4Addr>::new()
         .destination_prefix(dest.ip(), dest.prefix())
         .output_interface(iface_idx)
@@ -118,6 +118,7 @@ async fn add_route(
         .pref_source(source)
         .build();
     handle.route().add(route).execute().await?;
+    println!("Route for {} added.", address);
     Ok(())
 }
 
