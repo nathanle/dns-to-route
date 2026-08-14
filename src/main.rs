@@ -28,6 +28,7 @@ async fn main() -> Result<(), ()> {
         eprintln!("invalid interface");
         std::process::exit(1);
     });
+
     let iface = iface.into();
     let iface_idx = handle
         .link()
@@ -40,16 +41,19 @@ async fn main() -> Result<(), ()> {
         .unwrap()
         .header
         .index;
+
     let source: Ipv4Addr = args[3].parse().unwrap_or_else(|_| {
         eprintln!("invalid source");
         std::process::exit(1);
     });
+
     let resolver = Resolver::builder_tokio().unwrap().build().unwrap();
     let response = resolver.lookup_ip(dnsname).await.unwrap();
-    let current_routes = RouteMessageBuilder::<Ipv4Addr>::new()
-        .build();
     let mut run_once = true;
     let mut dns_proto_exists = false;
+    let current_routes = RouteMessageBuilder::<Ipv4Addr>::new()
+        .build();
+
     for address in response.iter() {
         if address.is_ipv4() {
             let mut ipv4address: Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
@@ -57,7 +61,7 @@ async fn main() -> Result<(), ()> {
             if let IpAddr::V4(v4_addr) = address {
                 ipv4address = v4_addr;
             }
-            println!("Checking status of address: {:?}", address.clone());
+            println!("Checking DNS results against current table.");
             let ip = RouteAttribute::Destination(RouteAddress::Inet(ipv4address));
             let mut route_found: bool = false;
             while let Ok(Some(route)) = routes.try_next().await {
