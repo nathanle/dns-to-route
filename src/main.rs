@@ -20,15 +20,16 @@ async fn main() -> Result<(), ()> {
         usage();
         return Ok(());
     }
+
     let dnsname: String = args[1].parse().unwrap_or_else(|_| {
         eprintln!("invalid DNS name");
         std::process::exit(1);
     });
+
     let iface: String = args[2].parse().unwrap_or_else(|_| {
         eprintln!("invalid interface");
         std::process::exit(1);
     });
-
     let iface = iface.into();
     let iface_idx = handle
         .link()
@@ -50,7 +51,6 @@ async fn main() -> Result<(), ()> {
     let resolver = Resolver::builder_tokio().unwrap().build().unwrap();
     let response = resolver.lookup_ip(dnsname).await.unwrap();
     let mut run_once = true;
-    let mut dns_proto_exists = false;
     let current_routes = RouteMessageBuilder::<Ipv4Addr>::new()
         .build();
 
@@ -65,7 +65,7 @@ async fn main() -> Result<(), ()> {
             let ip = RouteAttribute::Destination(RouteAddress::Inet(ipv4address));
             let mut route_found: bool = false;
             while let Ok(Some(route)) = routes.try_next().await {
-                dns_proto_exists = false;
+                let mut dns_proto_exists = false;
                 let protocol = route.header.protocol; 
                 if protocol == RouteProtocol::Babel {
                     dns_proto_exists = true;
@@ -85,9 +85,12 @@ async fn main() -> Result<(), ()> {
                     }
                     if let RouteAttribute::Destination(RouteAddress::Inet(_)) = r && *r != ip && dns_proto_exists && run_once && !in_dns_results {
                         println!("Route exists for {:#?}, but no longer in DNS.", raddress);
-                        let _ = handle.route().del(route.clone()).execute().await;
-                        println!("Route for {:#?} deleted.", raddress);
-                        //route_found = true;
+                        if let Err(e) = handle.route().del(route.clone()).execute().await {
+                            eprintln!("{e}");
+                        }
+                        else {
+                            println!("Route for {:#?} deleted.", raddress);
+                        }
                     }
                 }
             }
