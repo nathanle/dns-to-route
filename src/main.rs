@@ -87,8 +87,7 @@ async fn main() -> Result<(), ()> {
                         println!("Route exists for {:#?}, but no longer in DNS.", raddress);
                         let _ = handle.route().del(route.clone()).execute().await;
                         println!("Route for {:#?} deleted.", raddress);
-                        route_found = true;
-                        run_once = false;
+                        //route_found = true;
                     }
                 }
             }
@@ -102,6 +101,7 @@ async fn main() -> Result<(), ()> {
                     eprintln!("{e}");
                 };
             }
+        run_once = false;
         }
     }
     Ok(())
