@@ -6,7 +6,7 @@ use hickory_resolver::{Resolver};
 use futures_util::TryStreamExt;
 use ipnetwork::Ipv4Network;
 use rtnetlink::{new_connection, Error, Handle, RouteMessageBuilder};
-use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteProtocol};
+use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteProtocol, RouteMessage};
 
 const DNS_ROUTE: RouteProtocol = RouteProtocol::Other(42); 
 
@@ -30,11 +30,10 @@ async fn main() -> Result<(), ()> {
         eprintln!("invalid interface");
         std::process::exit(1);
     });
-    let iface = iface.into();
     let iface_idx = handle
         .link()
         .get()
-        .match_name(iface)
+        .match_name(iface.into())
         .execute()
         .try_next()
         .await
@@ -70,7 +69,7 @@ async fn main() -> Result<(), ()> {
                 if protocol == RouteProtocol::Babel {
                     dns_proto_exists = true;
                 }
-                for r in &route.attributes {
+                for r in &route.attributes.clone() {
                     let mut raddress: Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
                     if let RouteAttribute::Destination(RouteAddress::Inet(x)) = r {
                         raddress = *x;
@@ -84,13 +83,7 @@ async fn main() -> Result<(), ()> {
                         route_found = true;
                     }
                     if let RouteAttribute::Destination(RouteAddress::Inet(_)) = r && *r != ip && dns_proto_exists && run_once && !in_dns_results {
-                        println!("Route exists for {:#?}, but no longer in DNS.", raddress);
-                        if let Err(e) = handle.route().del(route.clone()).execute().await {
-                            eprintln!("{e}");
-                        }
-                        else {
-                            println!("Route for {:#?} deleted.", raddress);
-                        }
+                        let _ = del_route(raddress, route.clone(), handle.clone()).await;
                     }
                 }
             }
@@ -108,6 +101,16 @@ async fn main() -> Result<(), ()> {
         }
     }
     Ok(())
+}
+
+async fn del_route(raddress: Ipv4Addr, route: RouteMessage, handle: Handle) {
+    println!("Route exists for {:#?}, but no longer in DNS.", raddress);
+    if let Err(e) = handle.route().del(route).execute().await {
+        eprintln!("{e}");
+    }
+    else {
+        println!("Route for {:#?} deleted.", raddress);
+    }
 }
 
 async fn add_route(
