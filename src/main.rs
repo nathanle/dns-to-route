@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: MIT
-
+// Written by: Nathan LeSueur @ Akamai Technologies, Inc.
+// Purpose: Updates local routing table with results from DNS lookup
+// Intended to be used LKE-E NAT 
+//
+//
+//
 use std::{env, net::Ipv4Addr, net::IpAddr};
 use hickory_resolver::{Resolver};
 
