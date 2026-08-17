@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Written by: Nathan LeSueur @ Akamai Technologies, Inc.
 // Purpose: Updates local routing table with results from DNS lookup
-// Intended to be used LKE-E NAT 
+// Intended to be used with LKE-E NAT Gateway 
 // Uses proto Babel (numerical 42) to identify routes added by this tool
 //
 //
@@ -140,7 +140,7 @@ async fn del_route(raddress: Ipv4Addr, route: RouteMessage, handle: Handle) {
         println!("Route for {:#?} deleted.", raddress);
     }
 }
-//Build the route payload and add it to the tabel
+//Build the route payload and add it to the table
 async fn add_route(
     dest: &Ipv4Network,
     iface_idx: u32,
