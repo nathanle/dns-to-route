@@ -2,7 +2,7 @@
 // Written by: Nathan LeSueur @ Akamai Technologies, Inc.
 // Purpose: Updates local routing table with results from DNS lookup
 // Intended to be used LKE-E NAT 
-//
+// Uses proto Babel (numerical 42) to identify routes added by this tool
 //
 //
 use std::{env, net::Ipv4Addr, net::IpAddr};
@@ -17,8 +17,13 @@ const DNS_ROUTE: RouteProtocol = RouteProtocol::Other(42);
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {
+    //Setup connection to rtnetlink
     let (connection, handle, _) = new_connection().unwrap();
     tokio::spawn(connection);
+    //Collect command line provided arguments:
+    //dnsname record to resolve
+    //inteface to use for the route
+    //source to use for the route
     let args: Vec<String> = env::args().collect();
     if args.len() != 4 {
         println!("Argument count: {}", args.len());
@@ -35,6 +40,8 @@ async fn main() -> Result<(), ()> {
         eprintln!("invalid interface");
         std::process::exit(1);
     });
+    //convert the inteface provided on the commandline from string to format to be used with
+    //rtnetlink
     let iface_idx = handle
         .link()
         .get()
@@ -58,7 +65,12 @@ async fn main() -> Result<(), ()> {
     let current_routes = RouteMessageBuilder::<Ipv4Addr>::new()
         .build();
 
+    //Check IPv4 addresses returned from DNS against the routing table. Verifies IPv4 and
+    //gets/creates unified IPv4 address type from DNS resolver and rtnetlink
+    //
+    //Test each address in the DNS response
     for address in response.iter() {
+        //Only concerned about IPv4 (Plan to add IPv6 support if needed later)
         if address.is_ipv4() {
             let mut ipv4address: Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
             let mut routes = handle.route().get(current_routes.clone()).execute();
@@ -71,14 +83,20 @@ async fn main() -> Result<(), ()> {
             while let Ok(Some(route)) = routes.try_next().await {
                 let mut dns_proto_exists = false;
                 let protocol = route.header.protocol; 
+                //We ONLY want to perform oprations on routes with the Babel protocol as we know it
+                //is routes from this application.
                 if protocol == RouteProtocol::Babel {
                     dns_proto_exists = true;
                 }
                 for r in &route.attributes.clone() {
                     let mut raddress: Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
+                    //There are other attributes in the route record, but we only care about the IP
+                    //address for Destination for our comparisons.
                     if let RouteAttribute::Destination(RouteAddress::Inet(x)) = r {
                         raddress = *x;
                     }
+                    //If the IP in the DNS result matches a route currently in the table
+                    //in_dns_results is "true".
                     let in_dns_results = response.iter().any(|item| match item {
                         IpAddr::V6(_) => false,
                         IpAddr::V4(item) => item == raddress,
@@ -87,13 +105,17 @@ async fn main() -> Result<(), ()> {
                         println!("Route exists for {:#?}", ipv4address);
                         route_found = true;
                     }
+                    //If the route table has an IP no longer returned in DNS, we need to delete it
+                    //as it is considered no longer in use.
                     if let RouteAttribute::Destination(RouteAddress::Inet(_)) = r && *r != ip && dns_proto_exists && run_once && !in_dns_results {
                         let _ = del_route(raddress, route.clone(), handle.clone()).await;
                     }
                 }
             }
+            //IP reterned from DNS was not found in the routing table, so we need to add it.
             if !route_found {
                 println!("No matching result exists. Adding DNS result {} to the table.", ipv4address);
+                //Unlikely to be wrong format as the IP source was DNS, but we check it anyway.
                 let dest: Ipv4Network = format!("{}/32", address).parse().unwrap_or_else(|_| {
                     eprintln!("invalid destination");
                     std::process::exit(1);
@@ -107,7 +129,8 @@ async fn main() -> Result<(), ()> {
     }
     Ok(())
 }
-
+//Unlike add_route, we have the route payload already from rtnetlink, so we just need to trigger
+//the delete
 async fn del_route(raddress: Ipv4Addr, route: RouteMessage, handle: Handle) {
     println!("Route exists for {:#?}, but no longer in DNS.", raddress);
     if let Err(e) = handle.route().del(route).execute().await {
@@ -117,7 +140,7 @@ async fn del_route(raddress: Ipv4Addr, route: RouteMessage, handle: Handle) {
         println!("Route for {:#?} deleted.", raddress);
     }
 }
-
+//Build the route payload and add it to the tabel
 async fn add_route(
     dest: &Ipv4Network,
     iface_idx: u32,
