@@ -1,5 +1,53 @@
 # dns-to-route
 
+
+This is expected to run from an LKE-E with NAT Gateway for VPCs.
+
+```
+DESIRED_ROUTE="www.example.com eth0 10.0.0.1"
+
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: lke-route-installer
+  namespace: kube-system
+  labels:
+    app: route-installer
+spec:
+  selector:
+    matchLabels:
+      app: route-installer
+  template:
+    metadata:
+      labels:
+        app: route-installer
+    spec:
+      priorityClassName: system-node-critical
+      hostNetwork: true
+      tolerations:
+      - operator: "Exists"
+      containers:
+      - name: route-maintainer
+        image: customcontainer:latest
+        securityContext:
+          privileged: true
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "Starting loop for $DESIRED_ROUTE..."
+            while true; do
+              dns-to-route $DESIRED_ROUTE
+              sleep 30
+            done
+        resources:
+          limits:
+            cpu: 50m
+            memory: 50Mi
+EOF
+```
+
+
 Command syntax:
 ```
 usage:
@@ -19,7 +67,7 @@ Route for 172.66.147.243 added.```
 
 We did a DNS request on www.example.com and we recieved two IPv4 addresses back. We are going to add a route for each IP to use the eth0 interface and source from 172.236.110.200
 
-If one or all of the routes exist, we will skipp the step of adding the route:
+If one or all of the routes exist, we will skip the step of adding the route:
 ```
 #> ip route del 172.66.147.243 dev eth0 proto babel src 172.236.110.200
 #> dns-to-route www.example.com eth0 172.236.110.200
